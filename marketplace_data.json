@@ -1,0 +1,38 @@
+[
+    {
+        "id": 1,
+        "student": "keven_admin",
+        "item": "Calculator",
+        "looking_for": "Anything Can!!",
+        "contact": "+60 12-638-4757",
+        "status": "Swapped",
+        "image_file": "upload_1.jpg"
+    },
+    {
+        "id": 2,
+        "student": "keven_admin",
+        "item": "Computing Mathematics Written Notes",
+        "looking_for": "Networking",
+        "contact": "+60 12-638-4757",
+        "status": "Available",
+        "image_file": "upload_2.jpg"
+    },
+    {
+        "id": 4,
+        "student": "keven_admin",
+        "item": "Blazer",
+        "looking_for": "Personal Me",
+        "contact": "+60 12-638-4757",
+        "status": "Available",
+        "image_file": "upload_4.jpg"
+    },
+    {
+        "id": 5,
+        "student": "keven_admin",
+        "item": "NOTHING IS IMPOSSIBLE BY MEHDI ",
+        "looking_for": "Any Readable Books",
+        "contact": "+60 12-638-4757",
+        "status": "Available",
+        "image_file": "upload_5.jpg"
+    }
+]

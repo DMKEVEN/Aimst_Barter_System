@@ -1,0 +1,16 @@
+[
+    {
+        "username": "keven_admin",
+        "full_name": "Keventhiran A/L Devandren",
+        "student_id": "E25101420",
+        "phone": "+60 12-638-4757",
+        "password": "Taarieven2006"
+    },
+    {
+        "username": "taarisini_admin",
+        "full_name": "Taarisini A/P Selvakumar",
+        "student_id": "E25101220",
+        "phone": "+60 11-6411-6483",
+        "password": "Taarieven2006"
+    }
+]
