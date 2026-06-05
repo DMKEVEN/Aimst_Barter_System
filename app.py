@@ -168,6 +168,15 @@ LOGIN_TEMPLATE = """
 <head>
     <title>SECURE ACCESS PORTAL - AIMST Barter System</title>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <script>
+    (function(apiKey){
+        (function(p,e,n,d,o){var v,w,x,y,z;o=p[d]=p[d]||{};o._q=o._q||[];
+        v=['initialize','identify','updateOptions','pageLoad','track', 'trackAgent'];for(w=0,x=v.length;w<x;++w)(function(m){
+        o[m]=o[m]||function(){o._q[m===v[0]?'unshift':'push']([m].concat([].slice.call(arguments,0)));};})(v[w]);
+        y=e.createElement(n);y.async=!0;y.src='https://cdn.pendo.io/agent/static/'+apiKey+'/pendo.js';
+        z=e.getElementsByTagName(n)[0];z.parentNode.insertBefore(y,z);})(window,document,'script','pendo');
+    })('63f1477e-1fc8-4c8f-8143-959187ef3ba4');
+    </script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #eceff1; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 15px; box-sizing: border-box; }
         .security-wrapper { background: white; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 440px; padding: 25px 20px; box-sizing: border-box; }
@@ -232,6 +241,12 @@ LOGIN_TEMPLATE = """
     <script>
         function activateSecurityAnimation() { document.getElementById('securityWrapper').classList.add('security-access-active'); }
         function deactivateSecurityAnimation() { document.getElementById('securityWrapper').classList.remove('security-access-active'); }
+
+        pendo.initialize({
+            visitor: {
+                id: ''
+            }
+        });
     </script>
 </body>
 </html>
@@ -243,6 +258,15 @@ HTML_TEMPLATE = """
 <head>
     <title>AIMST Barter System 1.0 - Campus Exchange Network</title>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <script>
+    (function(apiKey){
+        (function(p,e,n,d,o){var v,w,x,y,z;o=p[d]=p[d]||{};o._q=o._q||[];
+        v=['initialize','identify','updateOptions','pageLoad','track', 'trackAgent'];for(w=0,x=v.length;w<x;++w)(function(m){
+        o[m]=o[m]||function(){o._q[m===v[0]?'unshift':'push']([m].concat([].slice.call(arguments,0)));};})(v[w]);
+        y=e.createElement(n);y.async=!0;y.src='https://cdn.pendo.io/agent/static/'+apiKey+'/pendo.js';
+        z=e.getElementsByTagName(n)[0];z.parentNode.insertBefore(y,z);})(window,document,'script','pendo');
+    })('63f1477e-1fc8-4c8f-8143-959187ef3ba4');
+    </script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; color: #333; margin: 0; padding: 20px; padding-bottom: 60px; }
         .container { max-width: 800px; margin: 0 auto; }
@@ -329,9 +353,9 @@ HTML_TEMPLATE = """
             <div class="user-badge">
                 {% if current_user %}
                     {% if current_user == 'keven_admin' or current_user == 'taarisini_admin' %}
-                        <div class="user-badge founder-badge-style">👑 Founder: {{ current_user }} | <a href="/logout" style="color: #fff; font-weight: bold;">Logout</a></div>
+                        <div class="user-badge founder-badge-style">👑 Founder: {{ current_user }} | <a href="/logout" onclick="pendo.clearSession()" style="color: #fff; font-weight: bold;">Logout</a></div>
                     {% else %}
-                        <div class="user-badge">👤 Session: {{ current_user }} | <a href="/logout">Logout</a></div>
+                        <div class="user-badge">👤 Session: {{ current_user }} | <a href="/logout" onclick="pendo.clearSession()">Logout</a></div>
                     {% endif %}
                 {% else %}
                     <div class="user-badge">👤 Mode: Guest | <a href="/login_page" style="color: #ffc107;">Login to Upload</a></div>
@@ -625,6 +649,22 @@ HTML_TEMPLATE = """
             document.getElementById("terminationModalOverlay").style.display = "none";
             document.getElementById("secureTerminationForm").reset();
         }
+
+        pendo.initialize({
+            visitor: {
+                id: ''
+            }
+        });
+        {% if current_user %}
+        pendo.identify({
+            visitor: {
+                id: {{ current_user|tojson }},
+                full_name: {{ current_full_name|tojson }},
+                student_id: {{ current_student_id|tojson }},
+                phone: {{ current_phone|tojson }}
+            }
+        });
+        {% endif %}
     </script>
 </body>
 </html>
@@ -639,6 +679,8 @@ def home():
     success_msg = request.args.get("success_msg")
     current_user = session.get("user")
     current_phone = None
+    current_full_name = None
+    current_student_id = None
 
     # Load active data sets from the persistent text files
     all_raw_students = load_user_registry()
@@ -671,16 +713,20 @@ def home():
 
         if is_owner:
             current_phone = student["phone"]
+            current_full_name = student["full_name"]
+            current_student_id = student["student_id"]
 
     return render_template_string(
         HTML_TEMPLATE, 
         items=active_feed, 
         error_msg=error_msg, 
         success_msg=success_msg, 
-        current_user=current_user, 
-        registry=processed_registry, 
+        current_user=current_user,
+        registry=processed_registry,
         current_phone=current_phone,
-        ai_matches=ai_matches  
+        current_full_name=current_full_name,
+        current_student_id=current_student_id,
+        ai_matches=ai_matches
     )
 
 @app.route("/login_page")
