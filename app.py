@@ -1,8 +1,46 @@
 import os
 import json
+import time
+import threading
+import requests as http_requests
 from flask import Flask, render_template_string, request, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from PIL import Image
+
+
+# =========================================================================
+# PENDO SERVER-SIDE TRACK EVENT HELPER
+# =========================================================================
+PENDO_TRACK_URL = "https://data.pendo.io/data/track"
+PENDO_INTEGRATION_KEY = "5a06d1b8-9002-4c90-b78b-bca79cd76054"
+
+
+def pendo_track(event_name, visitor_id, properties=None, account_id="aimst_barter_system"):
+    """Send a track event to Pendo's server-side API. Runs in a background thread to avoid blocking requests."""
+    payload = {
+        "type": "track",
+        "event": event_name,
+        "visitorId": visitor_id or "anonymous",
+        "accountId": account_id,
+        "timestamp": int(time.time() * 1000),
+        "properties": properties or {}
+    }
+
+    def _send():
+        try:
+            http_requests.post(
+                PENDO_TRACK_URL,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-pendo-integration-key": PENDO_INTEGRATION_KEY
+                },
+                timeout=5
+            )
+        except Exception as e:
+            print(f"Pendo track event error ({event_name}): {e}")
+
+    threading.Thread(target=_send, daemon=True).start()
 
 app = Flask(__name__)
 
@@ -156,6 +194,15 @@ def calculate_ai_agent_matches(feed):
                     "user_2": item_b["student"],
                     "item_2": item_b["item"]
                 })
+    if ai_alerts:
+        matched_users = list({m["user_1"] for m in ai_alerts} | {m["user_2"] for m in ai_alerts})
+        matched_items = list({m["item_1"] for m in ai_alerts} | {m["item_2"] for m in ai_alerts})
+        pendo_track("ai_trade_match_discovered", "system", {
+            "match_count": len(ai_alerts),
+            "matched_users": ", ".join(matched_users[:10]),
+            "matched_items": ", ".join(matched_items[:5]),
+            "available_items_scanned": len(available_items)
+        })
     return ai_alerts
 
 
@@ -700,8 +747,18 @@ def process_login():
             break
     if user_authenticated:
         session["user"] = username
+        is_admin = username in ["keven_admin", "taarisini_admin"]
+        pendo_track("user_login_completed", username, {
+            "username": username,
+            "is_admin": is_admin,
+            "login_method": "form"
+        })
         return redirect(url_for("home", success_msg="Authenticated successfully! Welcome back."))
     else:
+        pendo_track("user_login_failed", "anonymous", {
+            "attempted_username": username,
+            "failure_reason": "invalid_credentials"
+        })
         return redirect(url_for("login_page", error_msg="Authentication Failed! Incorrect Username or Password."))
 
 @app.route("/logout")
@@ -711,11 +768,20 @@ def process_logout():
 
 @app.route("/add_student", methods=["POST"])
 def add_student():
-    if session.get("user") not in ["keven_admin", "taarisini_admin"]:
+    current_user = session.get("user")
+    if current_user not in ["keven_admin", "taarisini_admin"]:
+        pendo_track("user_registration_failed", current_user or "anonymous", {
+            "attempted_by": current_user or "anonymous",
+            "failure_reason": "insufficient_permissions"
+        })
         return redirect(url_for("home", error_msg="Access Denied: Only Founders can authorize registry additions."))
 
     admin_key_input = request.form.get("admin_key")
     if admin_key_input != ADMIN_PASSWORD:
+        pendo_track("user_registration_failed", current_user, {
+            "attempted_by": current_user,
+            "failure_reason": "incorrect_admin_password"
+        })
         return redirect(url_for("home", error_msg="Registry Breach Aborted! Incorrect Master Admin Password."))
 
     username = request.form.get("reg_username", "").strip().lower()
@@ -728,6 +794,11 @@ def add_student():
 
     for student in current_registry:
         if student["username"] == username:
+            pendo_track("user_registration_failed", current_user, {
+                "attempted_username": username,
+                "attempted_by": current_user,
+                "failure_reason": "duplicate_username"
+            })
             return redirect(url_for("home", error_msg=f"Registration aborted: Username @{username} already exists."))
 
     current_registry.append({
@@ -739,6 +810,12 @@ def add_student():
     })
 
     save_user_registry(current_registry)
+    pendo_track("user_registered", current_user, {
+        "new_username": username,
+        "student_id": student_id,
+        "registered_by": current_user,
+        "total_users_count": len(current_registry)
+    })
     return redirect(url_for("home", success_msg=f"Successfully whitelisted @{username} to persistent disk storage!"))
 
 @app.route("/terminate/<string:target_username>", methods=["POST"])
@@ -758,8 +835,15 @@ def terminate_user(target_username):
             save_user_registry(current_registry)
 
             current_feed = load_marketplace_data()
+            items_removed = len([item for item in current_feed if item["student"] == target_username])
             updated_feed = [item for item in current_feed if item["student"] != target_username]
             save_marketplace_data(updated_feed)
+            pendo_track("user_terminated", session["user"], {
+                "terminated_username": target_username,
+                "terminated_by": session["user"],
+                "items_removed_count": items_removed,
+                "remaining_users_count": len(current_registry)
+            })
             return redirect(url_for("home", success_msg=f"Administrative Action Complete: Profile @{target_username} successfully purged."))
     return redirect(url_for("home", error_msg="Target profile trace identifier not found."))
 
@@ -777,8 +861,11 @@ def upload_item():
     contact = request.form.get("contact")
     file = request.files.get('item_image')
     filename = "default_item.jpg"
+    image_processing_success = None
+    original_file_format = None
     if file and file.filename != '':
         filename = f"upload_{next_item_id}.jpg"
+        original_file_format = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else "unknown"
         base_dir = os.path.dirname(os.path.abspath(__file__))
         upload_path = os.path.join(base_dir, 'static', 'images', filename)
         try:
@@ -787,9 +874,18 @@ def upload_item():
                 img = img.convert("RGB")
             img.thumbnail((800, 800))
             img.save(upload_path, "JPEG", quality=70, optimize=True)
+            image_processing_success = True
         except Exception as e:
             file.seek(0)
             file.save(upload_path)
+            image_processing_success = False
+        pendo_track("item_image_uploaded", session["user"], {
+            "item_id": next_item_id,
+            "filename": filename,
+            "image_processing_success": image_processing_success,
+            "original_file_format": original_file_format,
+            "username": session["user"]
+        })
     current_feed.append({
         "id": next_item_id,
         "student": session["user"],
@@ -800,6 +896,14 @@ def upload_item():
         "image_file": filename
     })
     save_marketplace_data(current_feed)
+    pendo_track("item_listed", session["user"], {
+        "item_id": next_item_id,
+        "item_name": item,
+        "looking_for": looking_for,
+        "has_image": filename != "default_item.jpg",
+        "username": session["user"],
+        "total_listings_count": len(current_feed)
+    })
     return redirect(url_for("home", success_msg="Item published successfully to the campus live feed!"))
 
 @app.route("/action/<int:item_id>", methods=["POST"])
@@ -816,12 +920,28 @@ def item_action(item_id):
         if item["id"] == item_id:
             if user_password_input == ADMIN_PASSWORD:
                 if action_type == "delete":
+                    pendo_track("item_deleted", current_logged_in_user, {
+                        "item_id": item_id,
+                        "item_name": item.get("item", ""),
+                        "item_owner": item.get("student", ""),
+                        "deleted_by": current_logged_in_user,
+                        "is_admin_action": True,
+                        "item_status_before_delete": item.get("status", "")
+                    })
                     current_feed.pop(index)
                     save_marketplace_data(current_feed)
                     return redirect(url_for("home", success_msg="Administrative action: Item successfully purged."))
                 elif action_type == "swap":
                     item["status"] = "Swapped"
                     save_marketplace_data(current_feed)
+                    pendo_track("item_swap_completed", current_logged_in_user, {
+                        "item_id": item_id,
+                        "item_name": item.get("item", ""),
+                        "looking_for": item.get("looking_for", ""),
+                        "item_owner": item.get("student", ""),
+                        "action_performed_by": current_logged_in_user,
+                        "is_admin_action": True
+                    })
                     return redirect(url_for("home", success_msg="Administrative action: Status overridden to Swapped."))
             registered_password = None
             for student in current_registry:
@@ -834,9 +954,25 @@ def item_action(item_id):
                 if action_type == "swap":
                     item["status"] = "Swapped"
                     save_marketplace_data(current_feed)
+                    pendo_track("item_swap_completed", current_logged_in_user, {
+                        "item_id": item_id,
+                        "item_name": item.get("item", ""),
+                        "looking_for": item.get("looking_for", ""),
+                        "item_owner": item.get("student", ""),
+                        "action_performed_by": current_logged_in_user,
+                        "is_admin_action": False
+                    })
                     return redirect(url_for("home", success_msg="Listing status successfully updated to Swapped!"))
                 elif action_type == "delete":
                     if item["status"] == "Swapped":
+                        pendo_track("item_deleted", current_logged_in_user, {
+                            "item_id": item_id,
+                            "item_name": item.get("item", ""),
+                            "item_owner": item.get("student", ""),
+                            "deleted_by": current_logged_in_user,
+                            "is_admin_action": False,
+                            "item_status_before_delete": "Swapped"
+                        })
                         current_feed.pop(index)
                         save_marketplace_data(current_feed)
                         return redirect(url_for("home", success_msg="Your completed listing has been removed from the log."))
